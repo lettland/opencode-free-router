@@ -65,10 +65,12 @@ copy_once() {
   fi
 }
 copy_once "$repo/templates/free.jsonc" "$dir/free.jsonc"
-# The one edit ever made to an existing free.jsonc: its plugin entry follows the rename.
+# The one edit ever made to an existing free.jsonc: its plugin entry follows the rename. Written
+# back in place, so a free.jsonc symlinked from elsewhere stays a symlink.
 if grep -q '"\./plugin\.js"' "$dir/free.jsonc"; then
   sed 's|"\./plugin\.js"|"./plugin.ts"|' "$dir/free.jsonc" >"$dir/free.jsonc.tmp"
-  mv "$dir/free.jsonc.tmp" "$dir/free.jsonc"
+  cat "$dir/free.jsonc.tmp" >"$dir/free.jsonc"
+  rm -f "$dir/free.jsonc.tmp"
   echo "updated  $dir/free.jsonc (plugin.js -> plugin.ts)"
 fi
 copy_once "$repo/templates/config.example.json" "$dir/config.json"
