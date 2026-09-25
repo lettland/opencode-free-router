@@ -3,7 +3,8 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { tokens, fit, bestMatch, percentiles, score, isFree, isEligible, looksSmall, classifyRetry, classifyError, pick, orderCandidates, mergeState, mergeConfig, readJSON, writeJSONAtomic, loadConfig, loadPins, coolingUntil, split, DEFAULT_CONFIG as cfg } from "../src/lib.mjs"
+import { tokens, fit, bestMatch, percentiles, score, isFree, isEligible, looksSmall, classifyRetry, classifyError, pick, orderCandidates, mergeState, mergeConfig, readJSON, writeJSONAtomic, loadConfig, loadPins, coolingUntil, split, decodeModel, decodeState, rankedIds, DEFAULT_CONFIG as cfg } from "../src/lib.mts"
+import type { ErrorDecision, ModelInfo, Pins, RetryDecision } from "../src/lib.mts"
 
 test("config merge keeps nested defaults", () => {
   const c = mergeConfig({ freeTier: { groq: [] }, weights: { arena_agent: 1 }, minContext: 1000 })
@@ -15,8 +16,45 @@ test("config merge keeps nested defaults", () => {
   assert.equal(c.cooldownMinutes.quota, 360)
 })
 
-const pins = { pin: [], ban: [], alias: {} }
-const model = (providerID, id, extra = {}) => ({
+test("config values of the wrong type keep their defaults", () => {
+  const c = mergeConfig({ minContext: "1000", autoContinue: false, excludeProviders: ["groq", 7], freeTier: { groq: "*", nvidia: ["*"] }, weights: { arena_agent: "1" }, cooldownMinutes: { quota: null, rate: 1 } })
+  assert.equal(c.minContext, cfg.minContext)
+  assert.equal(c.autoContinue, false)
+  assert.deepEqual(c.excludeProviders, ["groq"], "non-string entries are dropped")
+  assert.deepEqual(c.freeTier.groq, cfg.freeTier.groq, "a glob list must be a list")
+  assert.deepEqual(c.freeTier.nvidia, ["*"])
+  assert.equal(c.weights.arena_agent, cfg.weights.arena_agent)
+  assert.deepEqual(c.cooldownMinutes, { ...cfg.cooldownMinutes, rate: 1 })
+  assert.deepEqual(mergeConfig([1, 2]), cfg, "not an object at all")
+})
+
+test("decoding models and state keeps the well-formed parts", () => {
+  assert.deepEqual(decodeModel({ id: "x", providerID: "p", name: "X", status: "active", release_date: "2026-01-01", cost: { input: 0, output: 0, cache: {} }, limit: { context: 1 }, capabilities: { toolcall: true }, tool_call: true, extra: 1 }), {
+    id: "x",
+    providerID: "p",
+    name: "X",
+    status: "active",
+    release_date: "2026-01-01",
+    cost: { input: 0, output: 0 },
+    limit: { context: 1 },
+    capabilities: { toolcall: true },
+    tool_call: true,
+  })
+  const bare = decodeModel({ id: "x", providerID: "p", cost: { input: 0 }, limit: {}, capabilities: {} })
+  assert.deepEqual([bare?.cost, bare?.limit, bare?.capabilities], [undefined, undefined, undefined], "partial nested fields are left out")
+  assert.equal(decodeModel({ id: "x" }), undefined, "no provider")
+  assert.equal(decodeModel("x"), undefined)
+
+  const state = decodeState({ cooldowns: { a: { until: 5, klass: "quota", reason: 7 }, b: { klass: "rate" }, c: 1 }, sessions: { s: { model: "m" }, t: { at: 1 } } })
+  assert.deepEqual(state, { cooldowns: { a: { until: 5, klass: "quota", reason: undefined } }, sessions: { s: { model: "m", at: 0 } } })
+  assert.deepEqual(decodeState(undefined), { cooldowns: {}, sessions: {} })
+})
+
+const pins: Pins = { pin: [], ban: [], alias: {} }
+// The class and the failover of a decision, for either kind of decision.
+const klass = (d: RetryDecision | ErrorDecision) => (d.action === "ignore" ? undefined : d.klass)
+const failover = (d: RetryDecision | ErrorDecision) => (d.action === "failover" ? d : undefined)
+const model = (providerID: string, id: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
   providerID,
   id,
   name: id,
@@ -64,11 +102,11 @@ test("scoring: stealth near top, tiny unscored below scored, pins win", () => {
   const boards = { arena_webdev: percentiles([{ name: "nvidia-nemotron-3-ultra-550b", value: 1500 }, { name: "big-model", value: 1700 }, { name: "weak", value: 1000 }]) }
   const cands = [model("opencode", "nemotron-3-ultra-free"), model("opencode", "space-bunny-free", { name: "Space Bunny Free" }), model("openrouter", "liquid/lfm-2.5-2.6b:free", { release_date: new Date().toISOString().slice(0, 10) })]
   const r = score(cands, boards, ["Space Bunny Alpha"], cfg, pins)
-  assert.equal(r[0].id, "opencode/space-bunny-free")
-  assert.equal(r[1].id, "opencode/nemotron-3-ultra-free")
-  assert.equal(r.at(-1).id, "openrouter/liquid/lfm-2.5-2.6b:free")
+  assert.equal(r[0]?.id, "opencode/space-bunny-free")
+  assert.equal(r[1]?.id, "opencode/nemotron-3-ultra-free")
+  assert.equal(r.at(-1)?.id, "openrouter/liquid/lfm-2.5-2.6b:free")
   const pinned = score(cands, boards, ["Space Bunny Alpha"], cfg, { ...pins, pin: ["opencode/nemotron-3-ultra-free"] })
-  assert.equal(pinned[0].id, "opencode/nemotron-3-ultra-free")
+  assert.equal(pinned[0]?.id, "opencode/nemotron-3-ultra-free")
 })
 
 test("free filter", () => {
@@ -114,32 +152,32 @@ test("example config agrees with the shipped defaults", () => {
 
 test("retry classification", () => {
   const now = 1_000_000
-  assert.equal(classifyRetry({ message: "Free usage exceeded, subscribe to Go", attempt: 1, next: now + 5000 }, cfg, now).klass, "quota")
+  assert.equal(klass(classifyRetry({ message: "Free usage exceeded, subscribe to Go", attempt: 1, next: now + 5000 }, cfg, now)), "quota")
   assert.equal(classifyRetry({ message: "Free usage exceeded, subscribe to Go", attempt: 1 }, cfg, now).action, "failover")
   assert.equal(classifyRetry({ message: "Too Many Requests", attempt: 1, next: now + 5000 }, cfg, now).action, "wait")
   const r = classifyRetry({ message: "Too Many Requests", attempt: 1, next: now + 3 * 3600e3 }, cfg, now)
   assert.equal(r.action, "failover")
-  assert.equal(r.cooldownMs, 3 * 3600e3, "honours retry-after")
+  assert.equal(failover(r)?.cooldownMs, 3 * 3600e3, "honours retry-after")
   assert.equal(classifyRetry({ message: "Provider is overloaded", attempt: 1 }, cfg, now).action, "wait")
   assert.equal(classifyRetry({ message: "Provider is overloaded", attempt: 2 }, cfg, now).action, "failover")
-  assert.equal(classifyRetry({ message: "Provider is overloaded", attempt: 2, next: now + 3600e3 }, cfg, now).cooldownMs, 3600e3, "honours retry-after")
+  assert.equal(failover(classifyRetry({ message: "Provider is overloaded", attempt: 2, next: now + 3600e3 }, cfg, now))?.cooldownMs, 3600e3, "honours retry-after")
   assert.deepEqual(classifyRetry({ message: "something odd", attempt: 2 }, cfg, now), { action: "wait", klass: "other" })
   assert.deepEqual(classifyRetry({ message: "something odd", attempt: 3 }, cfg, now), { action: "failover", klass: "server", cooldownMs: 5 * 60e3 }, "unknown errors give up eventually")
-  assert.equal(classifyRetry({}, cfg, now).klass, "other")
+  assert.equal(klass(classifyRetry({}, cfg, now)), "other")
 })
 
 test("error classification", () => {
   assert.equal(classifyError({ name: "MessageAbortedError" }, cfg).action, "ignore")
-  assert.equal(classifyError({ name: "UnknownError", data: { message: "FreeTierError: OpenCode's free tier can only be used from within OpenCode" } }, cfg).klass, "unavailable")
-  assert.equal(classifyError({ name: "APIError", data: { message: "Not Found", statusCode: 404 } }, cfg).klass, "unavailable")
-  assert.equal(classifyError({ name: "APIError", data: { message: "Payment required", statusCode: 402 } }, cfg).klass, "unavailable", "free plan asked for a paid model")
-  assert.equal(classifyError({ name: "APIError", data: { message: "Unauthorized", statusCode: 401 } }, cfg).scope, "provider")
-  assert.equal(classifyError({ name: "APIError", data: { message: "rate limit", statusCode: 429 } }, cfg).klass, "rate")
+  assert.equal(klass(classifyError({ name: "UnknownError", data: { message: "FreeTierError: OpenCode's free tier can only be used from within OpenCode" } }, cfg)), "unavailable")
+  assert.equal(klass(classifyError({ name: "APIError", data: { message: "Not Found", statusCode: 404 } }, cfg)), "unavailable")
+  assert.equal(klass(classifyError({ name: "APIError", data: { message: "Payment required", statusCode: 402 } }, cfg)), "unavailable", "free plan asked for a paid model")
+  assert.equal(failover(classifyError({ name: "APIError", data: { message: "Unauthorized", statusCode: 401 } }, cfg))?.scope, "provider")
+  assert.equal(klass(classifyError({ name: "APIError", data: { message: "rate limit", statusCode: 429 } }, cfg)), "rate")
   assert.equal(classifyError({ name: "UnknownError", data: { message: "tool call failed: file not readable" } }, cfg).action, "ignore")
   assert.equal(classifyError(undefined, cfg).action, "ignore")
-  assert.equal(classifyError({ name: "ProviderAuthError" }, cfg).scope, "provider")
-  assert.equal(classifyError({ data: { message: "daily limit reached" } }, cfg).klass, "quota")
-  assert.equal(classifyError({ name: "APIError", data: { statusCode: 503 } }, cfg).klass, "server")
+  assert.equal(failover(classifyError({ name: "ProviderAuthError" }, cfg))?.scope, "provider")
+  assert.equal(klass(classifyError({ data: { message: "daily limit reached" } }, cfg)), "quota")
+  assert.equal(klass(classifyError({ name: "APIError", data: { statusCode: 503 } }, cfg)), "server")
 })
 
 test("pick and order", () => {
@@ -148,9 +186,9 @@ test("pick and order", () => {
   assert.deepEqual(pick(["a/1", "b/2", "c/3"], state, [], now), { id: "c/3", allCooling: false })
   assert.deepEqual(pick(["a/1", "b/2"], state, [], now), { id: "b/2", allCooling: true }, "soonest cooldown")
   assert.deepEqual(pick(["a/1", "c/3"], state, ["c/3"], now), { id: "a/1", allCooling: true })
-  const live = [model("opencode", "new-free", { release_date: "2026-09-24" }), model("opencode", "old-free", { release_date: "2026-01-01" }), model("openai", "paid", { cost: { input: 1, output: 1 } })]
-  const ranking = { models: [{ id: "opencode/old-free" }, { id: "openai/paid" }, { id: "opencode/gone-free" }] }
-  assert.deepEqual(orderCandidates(ranking, live, cfg, pins), ["opencode/old-free", "opencode/new-free"], "stale ranking cannot route to paid or vanished models")
+  const live = [model("opencode", "undated-free"), model("opencode", "new-free", { release_date: "2026-09-24" }), model("opencode", "old-free", { release_date: "2026-01-01" }), model("openai", "paid", { cost: { input: 1, output: 1 } })]
+  const ranking = { models: [{ id: "opencode/old-free" }, { id: "openai/paid" }, { id: "opencode/gone-free" }, { score: 1 }] }
+  assert.deepEqual(orderCandidates(rankedIds(ranking), live, cfg, pins), ["opencode/old-free", "opencode/new-free", "opencode/undated-free"], "stale ranking cannot route to paid or vanished models; unranked ones follow, newest first")
 })
 
 test("state merge keeps later cooldowns and prunes", () => {
@@ -159,10 +197,10 @@ test("state merge keeps later cooldowns and prunes", () => {
     { cooldowns: { x: { until: now + 10 }, old: { until: now - 1 } }, sessions: { s: { model: "a", at: now - 40 * 864e5 } } },
     { cooldowns: { x: { until: now + 20 } }, sessions: { t: { model: "b", at: now } } },
   )
-  assert.equal(merged.cooldowns.x.until, now + 20)
+  assert.equal(merged.cooldowns.x?.until, now + 20)
   assert.ok(!merged.cooldowns.old)
   assert.ok(!merged.sessions.s)
-  assert.equal(merged.sessions.t.model, "b")
+  assert.equal(merged.sessions.t?.model, "b")
 })
 
 test("cooldowns and ids", () => {
@@ -170,7 +208,7 @@ test("cooldowns and ids", () => {
   assert.equal(coolingUntil(state, "a/1", 100), 200)
   assert.equal(coolingUntil(state, "b/2", 100), 300, "provider-wide cooldown")
   assert.equal(coolingUntil(state, "a/1", 250), 0)
-  assert.equal(coolingUntil({}, "c/3", 0), 0)
+  assert.equal(coolingUntil({ cooldowns: {} }, "c/3", 0), 0)
   assert.deepEqual(split("openrouter/qwen/qwen3:free"), { providerID: "openrouter", modelID: "qwen/qwen3:free" })
 })
 
@@ -179,14 +217,14 @@ test("config and pins files", () => {
   try {
     assert.deepEqual(loadConfig(dir), cfg, "no config.json means defaults")
     assert.deepEqual(loadPins(dir), { pin: [], ban: [], alias: {} })
-    assert.equal(readJSON(path.join(dir, "missing.json"), "fallback"), "fallback")
+    assert.equal(readJSON(path.join(dir, "missing.json")), undefined)
     fs.writeFileSync(path.join(dir, "config.json"), "{ not json")
     assert.equal(loadConfig(dir).minContext, cfg.minContext, "broken config.json means defaults")
     writeJSONAtomic(path.join(dir, "config.json"), { minContext: 1, cooldownMinutes: { rate: 2 } })
     assert.equal(loadConfig(dir).minContext, 1)
     assert.equal(loadConfig(dir).cooldownMinutes.quota, 360)
-    writeJSONAtomic(path.join(dir, "pins.json"), { ban: ["x/y"] })
-    assert.deepEqual(loadPins(dir), { pin: [], ban: ["x/y"], alias: {} })
+    writeJSONAtomic(path.join(dir, "pins.json"), { ban: ["x/y", 1], alias: { "a/b": "b", "c/d": 2 } })
+    assert.deepEqual(loadPins(dir), { pin: [], ban: ["x/y"], alias: { "a/b": "b" } }, "malformed entries are dropped")
     assert.equal(fs.statSync(path.join(dir, "pins.json")).mode & 0o777, 0o600, "state files are private")
     assert.deepEqual(fs.readdirSync(dir).sort(), ["config.json", "pins.json"], "no temp files left behind")
   } finally {

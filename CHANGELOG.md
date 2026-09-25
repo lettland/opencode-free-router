@@ -6,6 +6,17 @@ release. A `[minor]` or `[major]` marker in a commit subject picks the bump; oth
 
 ## Unreleased
 
+- The code is now TypeScript, type-checked by TypeScript 7 in strict mode, and still ships as source
+  with no build step: opencode loads `plugin.ts`, and Node or Bun runs `rank.mts`. **Node 22.18 or
+  newer is now required** (Bun works as before); `install.sh` refuses an older `node` on `PATH`,
+  since the plugin starts the ranker with it.
+- Upgrading with `install.sh` replaces `plugin.js`, `lib.mjs` and `rank.mjs` with the new files and
+  points the `plugin` entry of an existing `free.jsonc` at `./plugin.ts`. Nothing else in your files
+  changes.
+- `config.json`, `pins.json`, `state.json`, the ranking and every API response are now checked field
+  by field when read. A value of the wrong type in `config.json` keeps its default, and malformed
+  entries in `pins.json` are skipped, where before they could break a ranking run.
+
 - Four more free providers on the `freeTier` allowlist, each checked against the provider's own terms
   rather than a price of 0: Z.AI and Zhipu AI (the free GLM Flash models, same key for both
   endpoints), ModelScope (all of its inference is free, with a 2,000 requests a day quota) and

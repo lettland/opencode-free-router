@@ -47,6 +47,7 @@ if [ "$purge" = 1 ]; then
   rm -rf "$dir"
   echo "removed $dir"
 else
-  rm -f "$dir/plugin.js" "$dir/lib.mjs" "$dir/rank.mjs" "$dir/opencode-free" "$dir/rank.lock"
+  # The .js/.mjs names are what installs from before the TypeScript port have.
+  rm -f "$dir/plugin.ts" "$dir/lib.mts" "$dir/rank.mts" "$dir/plugin.js" "$dir/lib.mjs" "$dir/rank.mjs" "$dir/opencode-free" "$dir/rank.lock"
   echo "removed code from $dir; kept free.jsonc, config.json, pins.json, *.env, ranking and state (use --purge to delete them)"
 fi

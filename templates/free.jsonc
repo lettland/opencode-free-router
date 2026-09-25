@@ -2,9 +2,9 @@
   "$schema": "https://opencode.ai/config.json",
   // opencode-free-router: loaded via OPENCODE_CONFIG by the `opencode-free` wrapper (and the bb agent),
   // merged over your normal opencode config, so plain `opencode` is unaffected.
-  // free/auto is a placeholder: plugin.js swaps it for the best-ranked free model on every turn
-  // (sticky per session) and fails over when that model runs out. See ranking.json / rank.mjs.
-  "plugin": ["./plugin.js"],
+  // free/auto is a placeholder: plugin.ts swaps it for the best-ranked free model on every turn
+  // (sticky per session) and fails over when that model runs out. See ranking.json / rank.mts.
+  "plugin": ["./plugin.ts"],
   "model": "free/auto",
   "provider": {
     // Never called: the dead baseURL makes a missed rewrite fail fast instead of

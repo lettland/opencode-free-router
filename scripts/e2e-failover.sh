@@ -1,5 +1,5 @@
 #!/bin/sh
-# End-to-end failover check against a real opencode (not run in CI; needs opencode, node, curl
+# End-to-end failover check against a real opencode (not run in CI; needs opencode, node 22.18+, curl
 # and network access to OpenCode Zen's free models).
 #   ./scripts/e2e-failover.sh
 # Ranks a fake provider that always answers 429 "per-day limit" first, then checks that
@@ -19,7 +19,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-cp "$repo/src/plugin.js" "$repo/src/lib.mjs" "$repo/src/rank.mjs" "$work/"
+cp "$repo/src/plugin.ts" "$repo/src/lib.mts" "$repo/src/rank.mts" "$work/"
 # The fake provider must count as free; everything else keeps the defaults.
 printf '{"freeTier":{"fakefree":["*"]}}\n' >"$work/config.json"
 cp "$repo/templates/pins.example.json" "$work/pins.json"
@@ -27,7 +27,7 @@ cp "$repo/templates/pins.example.json" "$work/pins.json"
 cat >"$work/free.jsonc" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
-  "plugin": ["./plugin.js"],
+  "plugin": ["./plugin.ts"],
   "model": "free/auto",
   "provider": {
     "free": { "npm": "@ai-sdk/openai-compatible", "name": "Free", "options": { "baseURL": "http://127.0.0.1:9/v1", "apiKey": "x" },

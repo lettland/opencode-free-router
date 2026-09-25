@@ -1,0 +1,25 @@
+{
+  // Type-check only. The .ts/.mts sources ship as they are: opencode (Bun) loads plugin.ts, and
+  // node 22.18+ or bun runs rank.mts, both stripping the types at load time. That is why only
+  // erasable syntax is allowed and imports name the .ts/.mts file itself.
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "nodenext",
+    "types": ["node"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test"]
+}

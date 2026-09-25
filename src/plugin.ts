@@ -5,6 +5,8 @@
 import fs from "node:fs"
 import path from "node:path"
 import { execFile, spawn } from "node:child_process"
+import type { Hooks, Plugin } from "@opencode-ai/plugin"
+import type { SessionStatus } from "@opencode-ai/sdk"
 import {
   DIR,
   isVirtual,
@@ -12,21 +14,55 @@ import {
   writeJSONAtomic,
   loadConfig,
   loadPins,
+  decodeState,
   mergeState,
+  rankedIds,
   orderCandidates,
   pick,
   classifyRetry,
   classifyError,
   coolingUntil,
   split,
-} from "./lib.mjs"
+  optString,
+  errorText,
+} from "./lib.mts"
+import type { Config, Failover, FailureClass, ModelInfo, ModelRef, State } from "./lib.mts"
+
+// A provider from opencode's provider list. Its models may leave out their provider id.
+export interface LiveProvider {
+  id: string
+  models?: Record<string, Omit<ModelInfo, "providerID"> & { providerID?: string | undefined }> | undefined
+}
+
+// The part of the opencode SDK client the router calls. Tests pass a fake; opencode's own client
+// has to fit it too, which `server satisfies Plugin` at the end of this file checks.
+export interface RouterClient {
+  config: {
+    providers(): Promise<{ data?: { providers: LiveProvider[] } | undefined }>
+  }
+  session: {
+    abort(options: { path: { id: string } }): Promise<{ error?: unknown }>
+    status(): Promise<{ data?: Record<string, SessionStatus> | undefined }>
+    promptAsync(options: { path: { id: string }; body: { model: ModelRef; agent?: string; parts: { type: "text"; text: string }[] } }): Promise<{ error?: unknown }>
+  }
+}
+
+// Per-session turn bookkeeping. `pending`: a failover whose continue has not been sent yet.
+interface Turn {
+  switches: number
+  pending?: { from: string; to: string; klass: FailureClass } | undefined
+  expectContinue: boolean
+  managed: boolean
+  firing?: boolean
+  agent?: string
+}
 
 const STATE = path.join(DIR, "state.json")
 const RANKING = path.join(DIR, "ranking.json")
 const LOG = path.join(DIR, "router.log")
 const LIVE_TTL = 5 * 60e3
 
-function log(msg) {
+function log(msg: string) {
   try {
     const st = fs.statSync(LOG, { throwIfNoEntry: false })
     if (st && st.size > 1 << 20) fs.renameSync(LOG, `${LOG}.1`)
@@ -34,18 +70,18 @@ function log(msg) {
   } catch {}
 }
 
-const readState = () => readJSON(STATE, { cooldowns: {}, sessions: {} })
+const readState = () => decodeState(readJSON(STATE))
 
 // Merge-on-write: other opencode processes share state.json.
-function update(fn) {
-  const mine = { cooldowns: {}, sessions: {} }
+function update(fn: (mine: State) => void) {
+  const mine: State = { cooldowns: {}, sessions: {} }
   fn(mine)
   writeJSONAtomic(STATE, mergeState(readState(), mine))
 }
 
-const REASON = { quota: "usage limit", rate: "rate limit", unavailable: "availability check (removed or refused)", auth: "auth failure", server: "provider errors" }
+const REASON: Record<FailureClass, string> = { quota: "usage limit", rate: "rate limit", unavailable: "availability check (removed or refused)", auth: "auth failure", server: "provider errors" }
 
-function which(bin) {
+function which(bin: string) {
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     const p = path.join(dir, bin)
     try {
@@ -53,12 +89,13 @@ function which(bin) {
       return p
     } catch {}
   }
+  return undefined
 }
 
 // Re-rank in the background when ranking.json is missing or stale. process.execPath is the
-// opencode binary here, so run rank.mjs with node (or bun) from PATH. One run at a time via a
+// opencode binary here, so run rank.mts with node (or bun) from PATH. One run at a time via a
 // lock file; a lock older than 10 minutes is treated as abandoned.
-function maybeRefresh(cfg) {
+function maybeRefresh(cfg: Config) {
   if (process.env.FREE_ROUTER_RANKING) return
   const st = fs.statSync(RANKING, { throwIfNoEntry: false })
   if (st && Date.now() - st.mtimeMs < cfg.refreshHours * 3600e3) return
@@ -73,11 +110,11 @@ function maybeRefresh(cfg) {
   const runtime = which("node") ?? which("bun")
   if (!runtime) {
     fs.rmSync(lock, { force: true })
-    log("WARN ranking is stale but neither node nor bun is on PATH; run rank.mjs manually")
+    log("WARN ranking is stale but neither node nor bun is on PATH; run rank.mts manually")
     return
   }
   const out = fs.openSync(LOG, "a")
-  const child = spawn(runtime, [path.join(DIR, "rank.mjs"), "--quiet", "--lock", lock], {
+  const child = spawn(runtime, [path.join(DIR, "rank.mts"), "--quiet", "--lock", lock], {
     detached: true,
     stdio: ["ignore", out, out],
     env: { ...process.env, FREE_ROUTER_DIR: DIR },
@@ -87,23 +124,26 @@ function maybeRefresh(cfg) {
   log(`refreshing ranking in the background (pid ${child.pid})`)
 }
 
-export const server = async ({ client }) => {
+export async function server({ client }: { client: RouterClient }): Promise<Hooks> {
   const cfg = loadConfig()
   try {
     maybeRefresh(cfg)
   } catch (e) {
-    log(`refresh check failed: ${e?.message ?? e}`)
+    log(`refresh check failed: ${errorText(e)}`)
   }
-  let ranking = { mtime: 0, data: undefined }
-  let live = { at: 0, models: [] }
-  // Per-session turn bookkeeping for this process.
-  const turns = new Map()
-  const turnOf = (sid) => turns.get(sid) ?? turns.set(sid, { switches: 0, pending: undefined, expectContinue: false, managed: false }).get(sid)
+  let ranking = { mtime: 0, ids: new Array<string>() }
+  let live = { at: 0, models: new Array<ModelInfo>() }
+  const turns = new Map<string, Turn>()
+  function turnOf(sid: string) {
+    let t = turns.get(sid)
+    if (!t) turns.set(sid, (t = { switches: 0, expectContinue: false, managed: false }))
+    return t
+  }
 
   function getRanking() {
     const st = fs.statSync(RANKING, { throwIfNoEntry: false })
-    if (st && st.mtimeMs !== ranking.mtime) ranking = { mtime: st.mtimeMs, data: readJSON(RANKING) }
-    return ranking.data
+    if (st && st.mtimeMs !== ranking.mtime) ranking = { mtime: st.mtimeMs, ids: rankedIds(readJSON(RANKING)) }
+    return ranking.ids
   }
 
   async function getLive() {
@@ -117,7 +157,7 @@ export const server = async ({ client }) => {
   // Ordered ids that are live, free right now and eligible; the runtime free check guards a stale ranking.
   const candidates = async () => orderCandidates(getRanking(), await getLive(), cfg, loadPins())
 
-  async function choose(sid, exclude = []) {
+  async function choose(sid: string, exclude: string[] = []) {
     const state = readState()
     const ordered = await candidates()
     const sticky = state.sessions[sid]?.model
@@ -127,14 +167,19 @@ export const server = async ({ client }) => {
     return p?.id
   }
 
-  const setSticky = (sid, id) => update((s) => (s.sessions[sid] = { model: id, at: Date.now() }))
+  const setSticky = (sid: string, id: string) =>
+    update((s) => {
+      s.sessions[sid] = { model: id, at: Date.now() }
+    })
 
-  async function failover(sid, c, message, abort) {
+  async function failover(sid: string, c: Failover, message: string, abort: boolean) {
     const t = turnOf(sid)
     const from = readState().sessions[sid]?.model
     if (!from || t.pending) return
     const coolKey = c.scope === "provider" ? `${from.split("/")[0]}/*` : from
-    update((s) => (s.cooldowns[coolKey] = { until: Date.now() + c.cooldownMs, klass: c.klass, reason: String(message).slice(0, 200) }))
+    update((s) => {
+      s.cooldowns[coolKey] = { until: Date.now() + c.cooldownMs, klass: c.klass, reason: message.slice(0, 200) }
+    })
     if (t.switches >= cfg.maxSwitchesPerTurn) {
       log(`give up ${sid}: already switched ${t.switches} times this turn; leaving ${from} (${c.klass})`)
       return
@@ -147,16 +192,16 @@ export const server = async ({ client }) => {
     setSticky(sid, to)
     t.switches++
     t.pending = { from, to, klass: c.klass }
-    log(`failover ${sid}: ${from} -> ${to} (${c.klass}: ${String(message).slice(0, 160)})`)
+    log(`failover ${sid}: ${from} -> ${to} (${c.klass}: ${message.slice(0, 160)})`)
     if (abort) {
-      const r = await client.session.abort({ path: { id: sid } }).catch((e) => ({ error: e }))
-      if (r?.error) log(`abort failed ${sid}: ${JSON.stringify(r.error).slice(0, 200)}`)
+      const r = await client.session.abort({ path: { id: sid } }).catch((e: unknown) => ({ error: e }))
+      if (r.error) log(`abort failed ${sid}: ${JSON.stringify(r.error).slice(0, 200)}`)
     }
     // The idle event normally triggers the continue; this covers an idle that fired before we got here.
     setTimeout(() => resume(sid), 1500)
   }
 
-  async function resume(sid, tries = 0) {
+  async function resume(sid: string, tries = 0) {
     const t = turnOf(sid)
     if (!t.pending || t.firing) return
     t.firing = true
@@ -170,7 +215,7 @@ export const server = async ({ client }) => {
     const { from, to, klass } = t.pending
     t.pending = undefined
     t.expectContinue = true
-    const text = `[free-router] ${from} hit its ${REASON[klass] ?? klass}; switched to ${to}. Continue the task from where it stopped.`
+    const text = `[free-router] ${from} hit its ${REASON[klass]}; switched to ${to}. Continue the task from where it stopped.`
     if (cfg.autoContinue === false) {
       t.expectContinue = false
       t.firing = false
@@ -181,20 +226,21 @@ export const server = async ({ client }) => {
     // start, so queue the continue as a visible thread message instead of prompting behind its back.
     // Only when opencode itself is bb's ACP agent: a TUI/serve started from a bb terminal
     // inherits BB_THREAD_ID too, and must not post into that thread.
-    if (process.env.BB_THREAD_ID && process.argv.includes("acp")) {
-      execFile(process.env.BB_CLI || "bb", ["thread", "message", "--mode", "queue", process.env.BB_THREAD_ID, text], { timeout: 60e3 }, (err, _out, stderr) => {
+    const thread = process.env.BB_THREAD_ID
+    if (thread && process.argv.includes("acp")) {
+      execFile(process.env.BB_CLI || "bb", ["thread", "message", "--mode", "queue", thread, text], { timeout: 60e3 }, (err, _out, stderr) => {
         if (err) {
           t.expectContinue = false
-          log(`bb continue failed ${sid}: ${String(stderr || err.message).slice(0, 200)}`)
-        } else log(`queued bb continue for ${process.env.BB_THREAD_ID} on ${to}`)
+          log(`bb continue failed ${sid}: ${(stderr || err.message).slice(0, 200)}`)
+        } else log(`queued bb continue for ${thread} on ${to}`)
       })
       t.firing = false
       return
     }
     const r = await client.session
       .promptAsync({ path: { id: sid }, body: { model: split(to), ...(t.agent ? { agent: t.agent } : {}), parts: [{ type: "text", text }] } })
-      .catch((e) => ({ error: e }))
-    if (r?.error) {
+      .catch((e: unknown) => ({ error: e }))
+    if (r.error) {
       t.expectContinue = false
       log(`continue failed ${sid}: ${JSON.stringify(r.error).slice(0, 200)}`)
     } else log(`continued ${sid} on ${to}`)
@@ -204,12 +250,13 @@ export const server = async ({ client }) => {
   return {
     "chat.message": async (input, output) => {
       const sid = input.sessionID
-      const model = output.message?.model ?? input.model
+      // The SDK types promise message.model, but hosts older than they are may only send input.model.
+      const model = output.message.model ?? input.model
       const t = turnOf(sid)
       const ours = t.expectContinue
       t.expectContinue = false
       const sticky = readState().sessions[sid]?.model
-      const managed = isVirtual(model) || (!!sticky && !!model && `${model.providerID}/${model.modelID}` === sticky)
+      const managed = !!model && (isVirtual(model) || (!!sticky && `${model.providerID}/${model.modelID}` === sticky))
       if (!managed) {
         t.managed = false
         return
@@ -221,37 +268,48 @@ export const server = async ({ client }) => {
         t.switches = 0
         t.pending = undefined
       }
-      const id = await choose(sid).catch((e) => log(`choose failed ${sid}: ${e?.message ?? e}`))
+      let id: string | undefined
+      try {
+        id = await choose(sid)
+      } catch (e) {
+        log(`choose failed ${sid}: ${errorText(e)}`)
+      }
       if (!id) {
         log(`ERROR no free model available for ${sid}; free/auto left in place, the request will fail`)
         return
       }
-      const { providerID, modelID } = split(id)
-      const { variant: _variant, ...rest } = output.message.model ?? {}
-      output.message.model = { ...rest, providerID, modelID }
+      // The pick replaces the model whole: a variant chosen for free/auto means nothing to it.
+      output.message.model = split(id)
       if (sticky !== id) log(`pick ${sid} -> ${id}${sticky ? ` (was ${sticky})` : ""}`)
       setSticky(sid, id)
     },
 
     event: async ({ event }) => {
-      const p = event?.properties ?? {}
-      const sid = p.sessionID
-      if (!sid || !turns.get(sid)?.managed) return
+      if (event.type !== "session.status" && event.type !== "session.idle" && event.type !== "session.error") return
+      const sid = event.properties.sessionID
+      const t = sid === undefined ? undefined : turns.get(sid)
+      if (sid === undefined || !t?.managed) return
       try {
-        if (event.type === "session.status" && p.status?.type === "retry") {
-          if (turns.get(sid).pending) return
-          const c = classifyRetry(p.status, cfg)
-          if (c.action === "failover") await failover(sid, c, p.status.message, true)
-          else log(`retry ${sid} attempt ${p.status.attempt}: ${String(p.status.message).slice(0, 120)} (letting opencode retry)`)
-        } else if ((event.type === "session.status" && p.status?.type === "idle") || event.type === "session.idle") {
+        if (event.type === "session.status" && event.properties.status.type === "retry") {
+          const status = event.properties.status
+          if (t.pending) return
+          const c = classifyRetry(status, cfg)
+          if (c.action === "failover") await failover(sid, c, status.message, true)
+          else log(`retry ${sid} attempt ${status.attempt}: ${status.message.slice(0, 120)} (letting opencode retry)`)
+        } else if ((event.type === "session.status" && event.properties.status.type === "idle") || event.type === "session.idle") {
           await resume(sid)
-        } else if (event.type === "session.error") {
-          const c = classifyError(p.error, cfg)
-          if (c.action === "failover") await failover(sid, c, `${p.error?.name ?? "error"}: ${p.error?.data?.message ?? ""}`, false)
+        } else if (event.type === "session.error" && event.properties.error) {
+          const error = event.properties.error
+          const c = classifyError(error, cfg)
+          if (c.action === "failover") await failover(sid, c, `${error.name}: ${optString(error.data.message) ?? ""}`, false)
         }
       } catch (e) {
-        log(`event ${event.type} failed ${sid}: ${e?.stack ?? e}`)
+        log(`event ${event.type} failed ${sid}: ${e instanceof Error && e.stack ? e.stack : errorText(e)}`)
       }
     },
   }
 }
+
+// opencode calls server with its whole PluginInput; this stops compiling when opencode's client no
+// longer provides what RouterClient needs.
+server satisfies Plugin

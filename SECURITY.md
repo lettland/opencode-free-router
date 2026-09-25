@@ -14,7 +14,7 @@ GitHub Security Advisories:
 
 - **Keys.** `providers.env` is exported into opencode, so the agent's tools can read those
   keys, like any opencode provider key. `ranker.env` (Artificial Analysis) is read only by
-  `rank.mjs`. Both are created with mode 0600 and are git-ignored.
+  `rank.mts`. Both are created with mode 0600 and are git-ignored.
 - **Cost.** A model is used only if its provider is on the `freeTier` allowlist. A price of 0
   alone is not trusted, since subscription plans and gateways report 0 too. Every pick is re-checked
   against live provider data, so a stale ranking cannot route to a model that has since become paid.

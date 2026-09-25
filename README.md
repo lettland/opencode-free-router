@@ -26,7 +26,9 @@ $ opencode-free run "explain this repo"
 
 ## Install
 
-Requires opencode and Node 22+ (or Bun), on macOS or Linux.
+Requires opencode and Node 22.18+ (or Bun), on macOS or Linux. The code is TypeScript and ships as
+source: opencode loads the plugin directly, and Node 22.18+ or Bun runs the ranker without a build
+step.
 
 ```sh
 git clone https://github.com/lettland/opencode-free-router
@@ -103,7 +105,7 @@ An optional `ARTIFICIAL_ANALYSIS_API_KEY` in `ranker.env` adds Artificial Analys
 
 ## How ranking works
 
-`rank.mjs` writes `ranking.json`. The plugin re-runs it in the background whenever the file is older
+`rank.mts` writes `ranking.json`. The plugin re-runs it in the background whenever the file is older
 than `refreshHours` (6).
 
 1. It lists the models opencode can reach (`opencode models --verbose`) and keeps the ones that are free,
@@ -116,7 +118,7 @@ than `refreshHours` (6).
    benchmarked model.
 
 ```sh
-node ~/.config/opencode/free-router/rank.mjs --status    # ranking, cooldowns, model per session
+node ~/.config/opencode/free-router/rank.mts --status    # ranking, cooldowns, model per session
 ```
 
 ### Overrides: `pins.json`
@@ -130,7 +132,7 @@ node ~/.config/opencode/free-router/rank.mjs --status    # ranking, cooldowns, m
 ```
 
 `pin` forces models to the top in that order, `ban` never uses them, and `alias` fixes a missed benchmark
-match. Run `rank.mjs` after editing.
+match. Run `rank.mts` after editing.
 
 ### Settings: `config.json`
 
@@ -187,7 +189,7 @@ Don't point `free/auto` at confidential or client code. To narrow the pool, `ban
 
 ## Troubleshooting
 
-- `rank.mjs --status` shows the ranking, warnings, active cooldowns, and which model each session uses.
+- `rank.mts --status` shows the ranking, warnings, active cooldowns, and which model each session uses.
 - `router.log` in the install directory records picks, failovers, continues and background refreshes.
 - `cache/candidates.json` holds what opencode reported for each model, which explains why a model was or
   wasn't eligible.
@@ -195,6 +197,8 @@ Don't point `free/auto` at confidential or client code. To narrow the pool, `ban
 ## Development
 
 ```sh
+npm ci --ignore-scripts       # compiler and type definitions, for npm run check only
+npm run check                 # type-check (TypeScript 7, strict)
 npm test                      # unit tests (no network, no opencode)
 npm run test:coverage         # same, plus coverage/lcov.info (Node 26+)
 npm run lint:sh               # shellcheck

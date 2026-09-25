@@ -13,15 +13,29 @@
   "bugs": {
     "url": "https://github.com/lettland/opencode-free-router/issues"
   },
-  "keywords": ["opencode", "opencode-plugin", "free-models", "llm-router", "lmarena", "openrouter", "bb"],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "free-models",
+    "llm-router",
+    "lmarena",
+    "openrouter",
+    "bb"
+  ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "test:coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include-all --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info test/*.test.mjs",
-    "check": "node --check src/lib.mjs && node --check src/rank.mjs && node --check src/plugin.js",
+    "test": "node --test test/*.test.ts",
+    "test:coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include-all --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info test/*.test.ts",
+    "check": "tsc",
     "lint:sh": "shellcheck scripts/*.sh bin/opencode-free",
     "e2e": "./scripts/e2e-failover.sh"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.32",
+    "@opencode-ai/sdk": "^1.18.32",
+    "@types/node": "^22.20.4",
+    "typescript": "^7.0.2"
   }
 }

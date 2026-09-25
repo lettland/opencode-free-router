@@ -33,16 +33,25 @@ done
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing prerequisite: $1" >&2; exit 1; }; }
 need opencode
-if command -v node >/dev/null 2>&1; then js=node; elif command -v bun >/dev/null 2>&1; then js=bun; else
-  echo "missing prerequisite: node (or bun)" >&2
+# rank.mts is TypeScript: node runs it as is from 22.18 on. The plugin starts it with the first
+# node on PATH, so an older node there is an error even when bun is installed too.
+if command -v node >/dev/null 2>&1; then
+  node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)' || {
+    echo "node $(node --version) is too old: 22.18 or newer runs rank.mts (or remove it from PATH and use bun)" >&2
+    exit 1
+  }
+  js=node
+elif command -v bun >/dev/null 2>&1; then js=bun; else
+  echo "missing prerequisite: node 22.18+ (or bun)" >&2
   exit 1
 fi
 
 mkdir -p "$dir"
 dir=$(cd "$dir" && pwd)
 
-# Code: always replaced.
-cp "$repo/src/plugin.js" "$repo/src/lib.mjs" "$repo/src/rank.mjs" "$dir/"
+# Code: always replaced. Older installs have it as plain JavaScript under other names.
+cp "$repo/src/plugin.ts" "$repo/src/lib.mts" "$repo/src/rank.mts" "$dir/"
+rm -f "$dir/plugin.js" "$dir/lib.mjs" "$dir/rank.mjs"
 sed "s|@FREE_ROUTER_DIR@|$dir|" "$repo/bin/opencode-free" >"$dir/opencode-free"
 chmod 755 "$dir/opencode-free"
 
@@ -56,6 +65,12 @@ copy_once() {
   fi
 }
 copy_once "$repo/templates/free.jsonc" "$dir/free.jsonc"
+# The one edit ever made to an existing free.jsonc: its plugin entry follows the rename.
+if grep -q '"\./plugin\.js"' "$dir/free.jsonc"; then
+  sed 's|"\./plugin\.js"|"./plugin.ts"|' "$dir/free.jsonc" >"$dir/free.jsonc.tmp"
+  mv "$dir/free.jsonc.tmp" "$dir/free.jsonc"
+  echo "updated  $dir/free.jsonc (plugin.js -> plugin.ts)"
+fi
 copy_once "$repo/templates/config.example.json" "$dir/config.json"
 copy_once "$repo/templates/pins.example.json" "$dir/pins.json"
 (
@@ -92,8 +107,8 @@ fi
 
 if [ "$rank" = 1 ]; then
   echo "ranking free models (first run downloads leaderboards)..."
-  "$js" "$dir/rank.mjs" || echo "ranking failed; the plugin retries on next start, or run: $js $dir/rank.mjs" >&2
-  "$js" "$dir/rank.mjs" --status | head -12
+  "$js" "$dir/rank.mts" || echo "ranking failed; the plugin retries on next start, or run: $js $dir/rank.mts" >&2
+  "$js" "$dir/rank.mts" --status | head -12
 fi
 
 cat <<EOF
@@ -103,7 +118,7 @@ Installed to $dir
   model:   free/auto
   keys:    $dir/providers.env  (optional provider keys, free plans only)
            $dir/ranker.env     (optional Artificial Analysis key)
-  status:  $js $dir/rank.mjs --status
+  status:  $js $dir/rank.mts --status
 EOF
 [ "$bb" = 1 ] && echo "  bb:      pick \"Free (auto)\" (provider acp-free)"
 exit 0
