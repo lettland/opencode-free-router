@@ -18,8 +18,10 @@ GitHub Security Advisories:
 - **Cost.** A model is used only if its provider is on the `freeTier` allowlist. A price of 0
   alone is not trusted, since subscription plans and gateways report 0 too. Every pick is re-checked
   against live provider data, so a stale ranking cannot route to a model that has since become paid.
-  Groq, Cerebras and Google count as free because of their free tiers: a key with billing
-  enabled can be charged.
+  Groq, Cerebras, Google and Mistral count as free because of their free tiers: a key with billing
+  enabled can be charged. Mistral is allowlisted by model name, limited to the families its free
+  Experiment plan covers, so a billing-enabled key is charged for those models exactly as it would
+  be for Groq or Cerebras.
 - **Data.** Free models are usually paid for with data. Most of OpenCode Zen's free models are
   exceptions to its zero-retention policy: they may use data to improve the model, NVIDIA's free
   endpoints log usage, and "contributor" models train on prompts. OpenRouter's free providers may keep

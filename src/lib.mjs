@@ -46,11 +46,19 @@ export const DEFAULT_CONFIG = {
   minContext: 64000,
   // The only providers treated as free, with model-id globs. "$zero" = models priced 0 there.
   // A price of 0 alone is not trusted: coding/token plans, gateways and local servers report 0 too.
-  // Groq, Cerebras and Google are free through their free tiers (models.dev lists paid prices).
   freeTier: {
+    // Priced 0 by the provider itself: Zen and OpenRouter ":free" slugs, NVIDIA's free
+    // endpoints, Z.AI's free GLM Flash models and ModelScope's free inference.
     opencode: ["$zero"],
     openrouter: ["$zero"],
     nvidia: ["$zero"],
+    zai: ["$zero"],
+    zhipuai: ["$zero"],
+    modelscope: ["$zero"],
+    // Priced, but free on a free-plan account (models.dev lists paid prices). Only the models
+    // the free tier actually covers: Mistral's Experiment plan (Devstral Small, Codestral,
+    // Mistral Small), Groq and Cerebras everything, Google Flash and Gemma.
+    mistral: ["$zero", "devstral-small*", "codestral*", "mistral-small*"],
     groq: ["*"],
     cerebras: ["*"],
     google: ["*flash*", "*gemma*"],
@@ -273,6 +281,8 @@ export function classifyError(error, cfg) {
   if (/ProviderAuthError/i.test(name) || status === 401 || status === 403)
     return { action: "failover", klass: "auth", scope: "provider", cooldownMs: min("unavailable") }
   if (status === 404 || RE_GONE.test(text)) return { action: "failover", klass: "unavailable", cooldownMs: min("unavailable") }
+  // 402: a free-plan account asking for a model it cannot pay for. Model-scoped, like a removal.
+  if (status === 402 || /payment required/i.test(text)) return { action: "failover", klass: "unavailable", cooldownMs: min("unavailable") }
   if (RE_QUOTA.test(text)) return { action: "failover", klass: "quota", cooldownMs: min("quota") }
   if (status === 429 || RE_RATE.test(text)) return { action: "failover", klass: "rate", cooldownMs: min("rate") }
   if ((status >= 500 && status < 600) || RE_SERVER.test(text)) return { action: "failover", klass: "server", cooldownMs: min("server") }

@@ -6,6 +6,17 @@ release. A `[minor]` or `[major]` marker in a commit subject picks the bump; oth
 
 ## Unreleased
 
+- Four more free providers on the `freeTier` allowlist, each checked against the provider's own terms
+  rather than a price of 0: Z.AI and Zhipu AI (the free GLM Flash models, same key for both
+  endpoints), ModelScope (all of its inference is free, with a 2,000 requests a day quota) and
+  Mistral (Devstral Small, Codestral and Mistral Small on the free Experiment plan, matched by name
+  since the catalog prices them). `providers.env.example` and the README list their keys and caveats.
+  Cloudflare Workers AI, Vercel AI Gateway, Hugging Face and the OpenRouter clone gateways were left
+  out on purpose, and the README says why.
+- A new test keeps `templates/config.example.json` in step with the shipped defaults.
+- A `402 Payment Required` now fails over like a removed model (24-hour cooldown) instead of being
+  ignored, so a free-plan account that asks for a model it cannot pay for moves on instead of
+  retrying a request that can never succeed.
 - Tests now run `rank.mjs` as a CLI (stubbed network, fake `opencode`) and `plugin.js` against a
   fake opencode client, bringing line coverage of `src/` to 100%. No behavior change; an
   unreachable API-key check in `rank.mjs` was removed.

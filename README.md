@@ -61,14 +61,42 @@ Without any keys you get OpenCode Zen's free models. Each key you add grows the 
 | OpenCode Zen | none | models priced 0 (`*-free`, big-pickle, …) |
 | OpenRouter | `OPENROUTER_API_KEY` | `:free` models (its routers like `openrouter/auto` are excluded) |
 | NVIDIA | `NVIDIA_API_KEY` | models priced 0 on build.nvidia.com |
+| Z.AI | `ZHIPU_API_KEY` | models priced 0 (GLM-4.7-Flash, GLM-4.5-Flash, GLM-4.6V-Flash) |
+| Zhipu AI | `ZHIPU_API_KEY` | the same free GLM Flash models, for a China (BigModel) account |
+| ModelScope | `MODELSCOPE_API_KEY` | models priced 0, which is all of them (2,000 requests a day) |
+| Mistral | `MISTRAL_API_KEY` | Devstral Small, Codestral and Mistral Small, via the free Experiment plan |
 | Groq | `GROQ_API_KEY` | all models, via the free tier |
 | Cerebras | `CEREBRAS_API_KEY` | all models, via the free tier |
 | Google AI Studio | `GOOGLE_GENERATIVE_AI_API_KEY` | Flash and Gemma models, via the free tier |
 
 Keys you already have through `opencode auth login` or your shell environment just work. Otherwise
 put them in `~/.config/opencode/free-router/providers.env`. That also covers launches that don't read
-your shell profile, like bb or GUI apps. **Use free-plan accounts**: Groq, Cerebras and Google models
-count as free because of their free tiers, so a key with billing enabled may be charged.
+your shell profile, like bb or GUI apps. **Use free-plan accounts**: Groq, Cerebras, Google and
+Mistral models count as free because of their free tiers, so a key with billing enabled may be
+charged.
+
+The four additions have their own caveats:
+
+- **Z.AI / Zhipu.** The free GLM Flash models are free for every account, not trial credits. The
+  catch is throughput: one request at a time, about one a second. They are two separate platforms
+  sharing one variable, `ZHIPU_API_KEY`: a z.ai key only works on `zai`, a BigModel (China) key only
+  on `zhipuai`. opencode reads the key for both, the wrong endpoint answers 401, and that provider
+  goes on a 24-hour cooldown, so exactly one of the two ever reaches the pool.
+- **ModelScope.** Everything it serves is free, with a quota of 2,000 requests a day (500 per model)
+  and no card, but signup wants a phone number and the endpoint is fastest inside Asia.
+- **Mistral.** The Experiment plan (no card, 1B tokens a month, 1 request a second) covers Devstral
+  Small 2, Codestral and Mistral Small, but the catalog prices them, so the router matches them by
+  name. Right now that means Codestral and Mistral Small: every Devstral entry Mistral lists is
+  marked deprecated, including its only 0-priced one, and the router skips those. The Devstral glob
+  is there for the first current Devstral Small that appears. Tune the families in `config.json` if
+  Mistral changes the plan:
+  `{"mistral": ["$zero", "devstral-small*", "codestral*", "mistral-small*"]}`.
+
+Left out on purpose, because a price of 0 there does not mean free: Cloudflare Workers AI (10,000
+neurons a day, and the models its free plan dropped now answer 403, which would bench the whole
+provider), Vercel AI Gateway (the free credits need a payment method, and the catalog marks Llama
+models as 0 that Vercel actually prices), Hugging Face ($0.10 of monthly credits), and the many
+gateway clones that list every model at 0.
 
 An optional `ARTIFICIAL_ANALYSIS_API_KEY` in `ranker.env` adds Artificial Analysis scores (free key,
 100 requests a day; the ranker uses a few per refresh). Without it, ranking uses LMArena only.
@@ -151,7 +179,8 @@ used for training:
   Muse Spark Contributor Free train on your prompts. Some stealth models state zero retention. Check
   [Zen's privacy notes](https://opencode.ai/docs/zen/) for the current list.
 - On OpenRouter, free providers may keep prompts.
-- Groq, Cerebras and Google free tiers follow each provider's own terms.
+- Groq, Cerebras, Google and Mistral free tiers follow each provider's own terms. So do Z.AI's free
+  GLM Flash models and ModelScope's free inference.
 
 Don't point `free/auto` at confidential or client code. To narrow the pool, `ban` specific models in
 `pins.json` or list whole providers in `excludeProviders`. See [SECURITY.md](SECURITY.md).

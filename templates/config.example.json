@@ -4,6 +4,10 @@
     "opencode": ["$zero"],
     "openrouter": ["$zero"],
     "nvidia": ["$zero"],
+    "zai": ["$zero"],
+    "zhipuai": ["$zero"],
+    "modelscope": ["$zero"],
+    "mistral": ["$zero", "devstral-small*", "codestral*", "mistral-small*"],
     "groq": ["*"],
     "cerebras": ["*"],
     "google": ["*flash*", "*gemma*"]
