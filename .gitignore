@@ -7,5 +7,6 @@ state.json
 router.log*
 rank.lock
 cache/
+coverage/
 node_modules/
 .DS_Store

@@ -1,6 +1,7 @@
 # opencode-free-router
 
 [![ci](https://github.com/lettland/opencode-free-router/actions/workflows/ci.yml/badge.svg)](https://github.com/lettland/opencode-free-router/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/lettland/opencode-free-router/badge.svg?branch=master)](https://coveralls.io/github/lettland/opencode-free-router?branch=master)
 
 An [opencode](https://opencode.ai) plugin that always runs on the **best free model available right
 now**, so you never have to track which free models exist this week.
@@ -163,6 +164,7 @@ Don't point `free/auto` at confidential or client code. To narrow the pool, `ban
 
 ```sh
 npm test                      # unit tests (no network, no opencode)
+npm run test:coverage         # same, plus coverage/lcov.info (Node 26+)
 npm run lint:sh               # shellcheck
 ./scripts/e2e-failover.sh     # real opencode + a fake 429 provider: failover, continue, stickiness
 ```

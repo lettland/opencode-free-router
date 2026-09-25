@@ -29,6 +29,28 @@ jobs:
       - run: npm run check
       - run: npm test
 
+  # Separate from the matrix: --test-coverage-include-all is Node 26+, and without
+  # it files no test imports are left out of the report instead of counting as 0%.
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - run: npm run test:coverage
+      # Upload only; a Coveralls outage never gates a run. GITHUB_TOKEN identifies
+      # the repo to Coveralls — no repo token secret. CI runs on every push to the
+      # default branch as well, so master gets one report per commit from here.
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage/lcov.info
+          format: lcov
+          fail-on-error: false
+
   scripts:
     name: shellcheck
     runs-on: ubuntu-latest

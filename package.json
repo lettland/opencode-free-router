@@ -19,6 +19,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "test:coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include-all --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info test/*.test.mjs",
     "check": "node --check src/lib.mjs && node --check src/rank.mjs && node --check src/plugin.js",
     "lint:sh": "shellcheck scripts/*.sh bin/opencode-free",
     "e2e": "./scripts/e2e-failover.sh"
