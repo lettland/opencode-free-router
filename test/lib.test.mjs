@@ -1,6 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { tokens, fit, bestMatch, percentiles, score, isFree, isEligible, looksSmall, classifyRetry, classifyError, pick, orderCandidates, mergeState, mergeConfig, DEFAULT_CONFIG as cfg } from "../src/lib.mjs"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { tokens, fit, bestMatch, percentiles, score, isFree, isEligible, looksSmall, classifyRetry, classifyError, pick, orderCandidates, mergeState, mergeConfig, readJSON, writeJSONAtomic, loadConfig, loadPins, coolingUntil, split, DEFAULT_CONFIG as cfg } from "../src/lib.mjs"
 
 test("config merge keeps nested defaults", () => {
   const c = mergeConfig({ freeTier: { groq: [] }, weights: { arena_agent: 1 }, minContext: 1000 })
@@ -99,6 +102,10 @@ test("retry classification", () => {
   assert.equal(r.cooldownMs, 3 * 3600e3, "honours retry-after")
   assert.equal(classifyRetry({ message: "Provider is overloaded", attempt: 1 }, cfg, now).action, "wait")
   assert.equal(classifyRetry({ message: "Provider is overloaded", attempt: 2 }, cfg, now).action, "failover")
+  assert.equal(classifyRetry({ message: "Provider is overloaded", attempt: 2, next: now + 3600e3 }, cfg, now).cooldownMs, 3600e3, "honours retry-after")
+  assert.deepEqual(classifyRetry({ message: "something odd", attempt: 2 }, cfg, now), { action: "wait", klass: "other" })
+  assert.deepEqual(classifyRetry({ message: "something odd", attempt: 3 }, cfg, now), { action: "failover", klass: "server", cooldownMs: 5 * 60e3 }, "unknown errors give up eventually")
+  assert.equal(classifyRetry({}, cfg, now).klass, "other")
 })
 
 test("error classification", () => {
@@ -108,6 +115,10 @@ test("error classification", () => {
   assert.equal(classifyError({ name: "APIError", data: { message: "Unauthorized", statusCode: 401 } }, cfg).scope, "provider")
   assert.equal(classifyError({ name: "APIError", data: { message: "rate limit", statusCode: 429 } }, cfg).klass, "rate")
   assert.equal(classifyError({ name: "UnknownError", data: { message: "tool call failed: file not readable" } }, cfg).action, "ignore")
+  assert.equal(classifyError(undefined, cfg).action, "ignore")
+  assert.equal(classifyError({ name: "ProviderAuthError" }, cfg).scope, "provider")
+  assert.equal(classifyError({ data: { message: "daily limit reached" } }, cfg).klass, "quota")
+  assert.equal(classifyError({ name: "APIError", data: { statusCode: 503 } }, cfg).klass, "server")
 })
 
 test("pick and order", () => {
@@ -131,4 +142,33 @@ test("state merge keeps later cooldowns and prunes", () => {
   assert.ok(!merged.cooldowns.old)
   assert.ok(!merged.sessions.s)
   assert.equal(merged.sessions.t.model, "b")
+})
+
+test("cooldowns and ids", () => {
+  const state = { cooldowns: { "a/1": { until: 200 }, "b/*": { until: 300 } } }
+  assert.equal(coolingUntil(state, "a/1", 100), 200)
+  assert.equal(coolingUntil(state, "b/2", 100), 300, "provider-wide cooldown")
+  assert.equal(coolingUntil(state, "a/1", 250), 0)
+  assert.equal(coolingUntil({}, "c/3", 0), 0)
+  assert.deepEqual(split("openrouter/qwen/qwen3:free"), { providerID: "openrouter", modelID: "qwen/qwen3:free" })
+})
+
+test("config and pins files", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "free-router-lib-"))
+  try {
+    assert.deepEqual(loadConfig(dir), cfg, "no config.json means defaults")
+    assert.deepEqual(loadPins(dir), { pin: [], ban: [], alias: {} })
+    assert.equal(readJSON(path.join(dir, "missing.json"), "fallback"), "fallback")
+    fs.writeFileSync(path.join(dir, "config.json"), "{ not json")
+    assert.equal(loadConfig(dir).minContext, cfg.minContext, "broken config.json means defaults")
+    writeJSONAtomic(path.join(dir, "config.json"), { minContext: 1, cooldownMinutes: { rate: 2 } })
+    assert.equal(loadConfig(dir).minContext, 1)
+    assert.equal(loadConfig(dir).cooldownMinutes.quota, 360)
+    writeJSONAtomic(path.join(dir, "pins.json"), { ban: ["x/y"] })
+    assert.deepEqual(loadPins(dir), { pin: [], ban: ["x/y"], alias: {} })
+    assert.equal(fs.statSync(path.join(dir, "pins.json")).mode & 0o777, 0o600, "state files are private")
+    assert.deepEqual(fs.readdirSync(dir).sort(), ["config.json", "pins.json"], "no temp files left behind")
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

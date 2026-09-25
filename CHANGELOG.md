@@ -6,6 +6,10 @@ release. A `[minor]` or `[major]` marker in a commit subject picks the bump; oth
 
 ## Unreleased
 
+- Tests now run `rank.mjs` as a CLI (stubbed network, fake `opencode`) and `plugin.js` against a
+  fake opencode client, bringing line coverage of `src/` to 100%. No behavior change; an
+  unreachable API-key check in `rank.mjs` was removed.
+
 ## 0.1.0 — 2026-09-25
 
 First public release.

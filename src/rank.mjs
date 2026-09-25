@@ -69,9 +69,9 @@ async function arenaBoard(config, field) {
   }
 }
 
+// Only called when ARTIFICIAL_ANALYSIS_API_KEY is set.
 async function aaModels() {
   const key = process.env.ARTIFICIAL_ANALYSIS_API_KEY
-  if (!key) return null
   const out = []
   for (let page = 1; page < 20; page++) {
     const d = await getJSON(`${AA_URL}?page=${page}`, { "x-api-key": key })
@@ -122,7 +122,7 @@ async function refresh() {
   }
   const aa = process.env.ARTIFICIAL_ANALYSIS_API_KEY ? await cached("aa", 20 * 3600e3, aaModels, warnings) : []
   if (!process.env.ARTIFICIAL_ANALYSIS_API_KEY) warnings.push("aa: ARTIFICIAL_ANALYSIS_API_KEY not set, Artificial Analysis scores skipped")
-  const aaRows = (metric) => (aa ?? []).map((m) => ({ name: m.slug ?? m.name, value: m.evaluations?.[metric] ?? undefined }))
+  const aaRows = (metric) => aa.map((m) => ({ name: m.slug ?? m.name, value: m.evaluations?.[metric] ?? undefined }))
   boards.aa_coding = percentiles(aaRows("artificial_analysis_coding_index"))
   boards.aa_agentic = percentiles(aaRows("artificial_analysis_agentic_index"))
   boards.aa_intelligence = percentiles(aaRows("artificial_analysis_intelligence_index"))
