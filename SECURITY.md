@@ -20,7 +20,10 @@ GitHub Security Advisories:
   against live provider data, so a stale ranking cannot route to a model that has since become paid.
   Groq, Cerebras and Google count as free because of their free tiers: a key with billing
   enabled can be charged.
-- **Data.** OpenRouter's free providers may keep prompts. Put `openrouter` in
-  `excludeProviders` to keep it away from sensitive code.
+- **Data.** Free models are usually paid for with data. Most of OpenCode Zen's free models are
+  exceptions to its zero-retention policy: they may use data to improve the model, NVIDIA's free
+  endpoints log usage, and "contributor" models train on prompts. OpenRouter's free providers may keep
+  prompts. Don't use `free/auto` for confidential code. Narrow the pool with `pins.json` → `ban`
+  or `excludeProviders`.
 - **Remote data** (LMArena, Artificial Analysis, OpenRouter) is parsed as JSON and used only
   for scoring; it is never executed.

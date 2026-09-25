@@ -138,8 +138,19 @@ runs `opencode-free acp`. Pick `free/auto` as its model. No other bb agent is to
 
 ## Privacy
 
-OpenCode Zen doesn't keep your data. OpenRouter's free providers may keep prompts; add `openrouter` to
-`excludeProviders` to keep work code away from them. See [SECURITY.md](SECURITY.md).
+**Free models are usually paid for with your data.** Assume prompts and completions may be logged or
+used for training:
+
+- On OpenCode Zen, most free models are explicit exceptions to Zen's zero-retention policy. During the
+  free period, data "may be used to improve the model" (Big Pickle, MiMo Flash, Ling Flash Fin). NVIDIA's free
+  endpoints log usage ("do not submit personal or confidential data"). "Contributor" models such as
+  Muse Spark Contributor Free train on your prompts. Some stealth models state zero retention. Check
+  [Zen's privacy notes](https://opencode.ai/docs/zen/) for the current list.
+- On OpenRouter, free providers may keep prompts.
+- Groq, Cerebras and Google free tiers follow each provider's own terms.
+
+Don't point `free/auto` at confidential or client code. To narrow the pool, `ban` specific models in
+`pins.json` or list whole providers in `excludeProviders`. See [SECURITY.md](SECURITY.md).
 
 ## Troubleshooting
 
