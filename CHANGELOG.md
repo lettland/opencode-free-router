@@ -1,5 +1,11 @@
 # Changelog
 
+Add entries under `## Unreleased`. The next push to `master` that changes shipped code cuts a
+release: the release workflow moves them under the new version, tags it and publishes the GitHub
+release. A `[minor]` or `[major]` marker in a commit subject picks the bump; otherwise it is a patch.
+
+## Unreleased
+
 ## 0.1.0 — 2026-09-25
 
 First public release.

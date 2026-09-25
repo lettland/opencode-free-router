@@ -34,6 +34,9 @@ cd opencode-free-router
 ./scripts/install.sh          # add --bb to also register a bb agent
 ```
 
+To pin a release instead of tracking `master`, `git checkout vX.Y.Z` (see
+[releases](https://github.com/lettland/opencode-free-router/releases)) before running it.
+
 This installs into `~/.config/opencode/free-router` (or `$XDG_CONFIG_HOME/…`, or `--dir PATH`), runs
 the first ranking, and links `opencode-free` into `~/.local/bin` if that is on your `PATH`. Re-run it
 to upgrade. Your config, pins, keys and state are never overwritten.
@@ -168,6 +171,11 @@ npm run test:coverage         # same, plus coverage/lcov.info (Node 26+)
 npm run lint:sh               # shellcheck
 ./scripts/e2e-failover.sh     # real opencode + a fake 429 provider: failover, continue, stickiness
 ```
+
+Every push to `master` that changes shipped code (`src`, `bin`, `templates`, the install scripts,
+`package.json`) is tagged and released automatically. Write entries under `## Unreleased` in
+[CHANGELOG.md](CHANGELOG.md); a `[minor]` or `[major]` marker in a commit subject picks the bump,
+otherwise it is a patch.
 
 ## Uninstall
 

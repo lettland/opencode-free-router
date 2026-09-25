@@ -1,0 +1,206 @@
+name: release
+
+# Every push to master that changes shipped code cuts a release — no hand-made
+# tags. The first release ships package.json's version as-is; after that, a
+# `[major]` or `[minor]` marker in any shipped commit subject since the last tag
+# opts into that bump, and anything else cuts a patch. A manual run can force a
+# bump, including a `prerelease` (-beta.N). Bumps use `npm version` semantics.
+#
+# Nothing is published anywhere else: users install from a git checkout, so the
+# release is the tag, the version commit, and the GitHub release notes.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "bin/**"
+      - "templates/**"
+      - "scripts/install.sh"
+      - "scripts/uninstall.sh"
+      - "package.json"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "auto = infer from commit markers, and release only if shipped code changed; anything else forces that bump"
+        type: choice
+        options: [auto, patch, minor, major, prerelease]
+        default: auto
+
+# Releases are serial: each one bumps from the tag the previous one pushed.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # What install.sh puts in place, plus the manifest. Docs, tests and CI alone
+  # never cut a release.
+  SHIPPED: src bin templates scripts/install.sh scripts/uninstall.sh package.json
+
+jobs:
+  plan:
+    name: plan
+    # Only master releases: the release commit is pushed as HEAD:master, and a
+    # manual run from a branch ahead of master would fast-forward it. The version
+    # commit is pushed with GITHUB_TOKEN, which never retriggers workflows; the
+    # committer check is the second net should that ever be a PAT.
+    if: >-
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'workflow_dispatch' ||
+      github.event.head_commit.committer.name != 'github-actions[bot]')
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      previous_tag: ${{ steps.plan.outputs.previous_tag }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tags and history since the last one
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: plan
+        env:
+          BUMP: ${{ inputs.release_type || 'auto' }}
+        run: |
+          read -ra shipped <<<"$SHIPPED"
+          # versionsort.suffix ranks v1.0.0-beta.N below v1.0.0.
+          prev=$(git -c versionsort.suffix=- tag --list 'v[0-9]*' --sort=-v:refname | awk 'NR == 1')
+          bump=$BUMP
+          release="true"
+          if [ -z "$prev" ]; then
+            # Never released: ship package.json's version unless a bump is forced.
+            if [ "$bump" = auto ]; then bump="initial"; else npm version "$bump" --preid beta --no-git-tag-version >/dev/null; fi
+          elif [ "$(git rev-parse HEAD)" != "$(git rev-parse "$prev^{commit}")" ] &&
+            git merge-base --is-ancestor HEAD "$prev"; then
+            # A re-run of the run that pushed $prev: its checkout predates the
+            # version commit, so releasing again would bump twice. (HEAD at the tag
+            # itself is a fresh run on an unchanged master; only a forced bump
+            # releases it, below.)
+            release="false"
+          elif [ "$bump" = auto ] && git diff --quiet "$prev" HEAD -- "${shipped[@]}"; then
+            release="false"
+          else
+            if [ "$bump" = auto ]; then
+              subjects=$(git log "$prev..HEAD" --no-merges --format=%s -- "${shipped[@]}")
+              if grep -qi '\[major\]' <<<"$subjects"; then bump="major"
+              elif grep -qi '\[minor\]' <<<"$subjects"; then bump="minor"
+              else bump="patch"; fi
+            fi
+            # Bump from the last tag, not from whatever package.json says. npm
+            # reformats the manifest; that is fine here, nothing is committed.
+            npm version "${prev#v}" --no-git-tag-version --allow-same-version >/dev/null
+            npm version "$bump" --preid beta --no-git-tag-version >/dev/null
+          fi
+          version=$(node -p 'require("./package.json").version')
+          if [ "$release" = true ]; then
+            echo "release v$version ($bump; previous ${prev:-none})"
+          else
+            echo "no release: nothing shipped changed since $prev, or HEAD is already in it"
+          fi
+          prerelease="false"
+          if [[ $version == *-* ]]; then prerelease="true"; fi
+          {
+            echo "release=$release"
+            echo "version=$version"
+            echo "previous_tag=$prev"
+            echo "prerelease=$prerelease"
+          } >>"$GITHUB_OUTPUT"
+
+  check:
+    name: check · test · shellcheck
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm run check
+      - run: npm test
+      - run: npm run lint:sh
+
+  github:
+    name: tag and GitHub release
+    needs: [plan, check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PREVIOUS_TAG: ${{ needs.plan.outputs.previous_tag }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Commit and tag
+        run: |
+          read -ra shipped <<<"$SHIPPED"
+          tag="v$VERSION"
+          # Non-blank lines, with blank lines kept only between content.
+          trim() { awk 'NF { for (; b > 0; b--) print ""; print; s = 1; next } s { b++ }'; }
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            # A re-run after the push already landed: release what was tagged.
+            echo "$tag is already pushed; reusing it"
+            git fetch --quiet --force origin "refs/tags/$tag:refs/tags/$tag"
+            git checkout --quiet "$tag"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            # Only the version line: `npm version` would reformat the whole manifest.
+            sed -i -E "0,/\"version\": *\"[^\"]*\"/s//\"version\": \"$VERSION\"/" package.json
+            # A version whose section was written by hand (the first release) is
+            # released as written; otherwise the Unreleased entries move under it.
+            if ! grep -q "^## $VERSION " CHANGELOG.md; then
+              entries="$RUNNER_TEMP/entries.md"
+              awk '/^## Unreleased/ { f = 1; next } f && /^## / { exit } f' CHANGELOG.md | trim >"$entries"
+              if [ ! -s "$entries" ]; then
+                # Nothing written under Unreleased: the shipped commit subjects.
+                git log ${PREVIOUS_TAG:+"$PREVIOUS_TAG..HEAD"} --no-merges --format='- %s' -- "${shipped[@]}" |
+                  grep -v '^- release: v' | sed -E 's/ *\[(major|minor|patch)\]//gI' >"$entries" || true
+              fi
+              [ -s "$entries" ] || echo "No changes recorded." >"$entries"
+              awk -v head="## $VERSION — $(date -u +%F)" -v entries="$entries" '
+                /^## Unreleased/ {
+                  print; print ""; print head; print ""
+                  while ((getline line < entries) > 0) print line
+                  print ""; skip = 1; next
+                }
+                skip && /^## / { skip = 0 }
+                !skip
+              ' CHANGELOG.md >"$RUNNER_TEMP/CHANGELOG.md"
+              mv "$RUNNER_TEMP/CHANGELOG.md" CHANGELOG.md
+            fi
+            git add package.json CHANGELOG.md
+            git diff --cached --quiet || git commit --quiet -m "release: $tag"
+            git tag -a "$tag" -m "opencode-free-router $tag"
+            # The version commit and its tag land together or not at all. If master
+            # moved during this run the push is rejected, and the run queued behind
+            # this one releases the combined changes instead.
+            git push --atomic origin HEAD:master "refs/tags/$tag"
+          fi
+          awk -v head="## $VERSION " 'index($0, head) == 1 { f = 1; next } f && /^## / { exit } f' CHANGELOG.md |
+            trim >"$RUNNER_TEMP/notes.md"
+      - name: Create GitHub release
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag exists"
+            exit 0
+          fi
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$tag" --verify-tag \
+            --title "opencode-free-router $tag" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
