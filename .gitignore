@@ -1,0 +1,11 @@
+# Keys and anything generated at runtime; none of it belongs in the repo.
+*.env
+.env*
+!templates/*.env.example
+ranking.json
+state.json
+router.log*
+rank.lock
+cache/
+node_modules/
+.DS_Store

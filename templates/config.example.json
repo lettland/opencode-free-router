@@ -1,0 +1,28 @@
+{
+  "minContext": 64000,
+  "freeTier": {
+    "opencode": ["$zero"],
+    "openrouter": ["$zero"],
+    "nvidia": ["$zero"],
+    "groq": ["*"],
+    "cerebras": ["*"],
+    "google": ["*flash*", "*gemma*"]
+  },
+  "excludeProviders": [],
+  "weights": {
+    "arena_agent": 0.35,
+    "arena_webdev": 0.35,
+    "arena_text": 0.15,
+    "aa_coding": 0.25,
+    "aa_agentic": 0.25,
+    "aa_intelligence": 0.15
+  },
+  "stealthScore": 0.95,
+  "unscoredBase": 0.25,
+  "unscoredRecencyMax": 0.1,
+  "smallPenalty": 0.15,
+  "cooldownMinutes": { "quota": 360, "rate": 10, "server": 5, "unavailable": 1440 },
+  "maxSwitchesPerTurn": 3,
+  "autoContinue": true,
+  "refreshHours": 6
+}

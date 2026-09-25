@@ -1,0 +1,22 @@
+#!/bin/sh
+# opencode with the free-router config: `opencode-free`, `opencode-free run ...`, `opencode-free acp`.
+# install.sh replaces @FREE_ROUTER_DIR@ with the install directory.
+set -eu
+
+dir="${FREE_ROUTER_DIR:-@FREE_ROUTER_DIR@}"
+if [ ! -f "$dir/free.jsonc" ]; then
+  echo "opencode-free: $dir/free.jsonc not found; run install.sh or set FREE_ROUTER_DIR" >&2
+  exit 1
+fi
+
+if [ -f "$dir/providers.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$dir/providers.env"
+  set +a
+fi
+
+FREE_ROUTER_DIR="$dir"
+OPENCODE_CONFIG="$dir/free.jsonc"
+export FREE_ROUTER_DIR OPENCODE_CONFIG
+exec opencode "$@"

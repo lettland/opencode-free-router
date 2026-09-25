@@ -1,0 +1,26 @@
+{
+  "name": "opencode-free-router",
+  "version": "0.1.0",
+  "description": "opencode plugin: always run on the best free model available, ranked by LMArena and Artificial Analysis, sticky per session, with automatic failover.",
+  "private": true,
+  "type": "module",
+  "license": "BSD-2-Clause",
+  "homepage": "https://github.com/lettland/opencode-free-router#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lettland/opencode-free-router.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lettland/opencode-free-router/issues"
+  },
+  "keywords": ["opencode", "opencode-plugin", "free-models", "llm-router", "lmarena", "openrouter", "bb"],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "check": "node --check src/lib.mjs && node --check src/rank.mjs && node --check src/plugin.js",
+    "lint:sh": "shellcheck scripts/*.sh bin/opencode-free",
+    "e2e": "./scripts/e2e-failover.sh"
+  }
+}
