@@ -18,7 +18,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test test/*.test.mjs",
     "check": "node --check src/lib.mjs && node --check src/rank.mjs && node --check src/plugin.js",
     "lint:sh": "shellcheck scripts/*.sh bin/opencode-free",
     "e2e": "./scripts/e2e-failover.sh"
