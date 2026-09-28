@@ -31,6 +31,10 @@ release. A `[minor]` or `[major]` marker in a commit subject picks the bump; oth
 - Tests now run `rank.mjs` as a CLI (stubbed network, fake `opencode`) and `plugin.js` against a
   fake opencode client, bringing line coverage of `src/` to 100%. No behavior change; an
   unreachable API-key check in `rank.mjs` was removed.
+- The bb agent registered by `install.sh --bb` now lists its model with `opencode models free`
+  instead of bb probing the agent over ACP, which sometimes came back empty and left bb showing only
+  "Agent default". Re-registering keeps fields you set on the entry by hand, such as `icon`, and a
+  failed registration no longer prints the other agents' env values.
 
 ## 0.1.0 — 2026-09-25
 

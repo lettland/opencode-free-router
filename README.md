@@ -168,7 +168,8 @@ The partial output of the interrupted turn is lost. At most `maxSwitchesPerTurn`
 ## bb
 
 `./scripts/install.sh --bb` registers a custom ACP agent **Free (auto)** (provider `acp-free`) that
-runs `opencode-free acp`. Pick `free/auto` as its model. No other bb agent is touched.
+runs `opencode-free acp`. Pick `free/auto` as its model. No other bb agent is touched. If an
+older install shows only "Agent default" as the model, re-run `./scripts/install.sh --bb`.
 
 ## Privacy
 

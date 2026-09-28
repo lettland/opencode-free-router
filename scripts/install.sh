@@ -100,9 +100,18 @@ if [ "$bb" = 1 ]; then
     import { execFileSync } from "node:child_process"
     const bb = process.env.BB_CLI || "bb"
     const cfg = JSON.parse(execFileSync(bb, ["plugin", "config", "provider-acp", "--json"], { encoding: "utf8" }))
-    const agents = JSON.parse(cfg.values?.customAgents || "[]").filter((a) => a.id !== "free")
-    agents.push({ id: "free", displayName: "Free (auto)", command: process.env.FREE_ROUTER_LAUNCHER, args: ["acp"], dialect: "opencode", supportsManualCompaction: true })
-    execFileSync(bb, ["plugin", "config", "provider-acp", "set", "customAgents", JSON.stringify(agents)], { stdio: ["ignore", "ignore", "inherit"] })
+    const all = JSON.parse(cfg.values?.customAgents || "[]")
+    const agents = all.filter((a) => a.id !== "free")
+    // Keep fields set by hand (e.g. icon). modelCli lists free/auto via "opencode models free"
+    // instead of bb probing the agent over ACP, which intermittently came back empty.
+    agents.push({ ...all.find((a) => a.id === "free"), id: "free", displayName: "Free (auto)", command: process.env.FREE_ROUTER_LAUNCHER, args: ["acp"], dialect: "opencode", modelCli: { listArgs: ["models", "free"], primaryModels: ["free/auto"] }, supportsManualCompaction: true })
+    try {
+      execFileSync(bb, ["plugin", "config", "provider-acp", "set", "customAgents", JSON.stringify(agents)], { stdio: ["ignore", "ignore", "inherit"] })
+    } catch {
+      // The error message would echo the full argv, env tokens included; bb already printed why.
+      console.error("bb agent registration failed")
+      process.exit(1)
+    }
     console.log("bb agents: " + agents.map((a) => a.id).join(", "))
   '
 fi
