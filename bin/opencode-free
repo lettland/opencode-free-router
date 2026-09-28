@@ -9,6 +9,14 @@ if [ ! -f "$dir/free.jsonc" ]; then
   exit 1
 fi
 
+# bb's model list (modelCli, see install.sh --bb). free/auto is the only model, so print it without
+# starting opencode, which can fail with "database is locked" while other opencode processes run,
+# and a failed listing makes bb replace free/auto with "Agent default".
+if [ "$*" = "--list-models" ]; then
+  echo free/auto
+  exit 0
+fi
+
 if [ -f "$dir/providers.env" ]; then
   set -a
   # shellcheck disable=SC1091

@@ -102,9 +102,10 @@ if [ "$bb" = 1 ]; then
     const cfg = JSON.parse(execFileSync(bb, ["plugin", "config", "provider-acp", "--json"], { encoding: "utf8" }))
     const all = JSON.parse(cfg.values?.customAgents || "[]")
     const agents = all.filter((a) => a.id !== "free")
-    // Keep fields set by hand (e.g. icon). modelCli lists free/auto via "opencode models free"
-    // instead of bb probing the agent over ACP, which intermittently came back empty.
-    agents.push({ ...all.find((a) => a.id === "free"), id: "free", displayName: "Free (auto)", command: process.env.FREE_ROUTER_LAUNCHER, args: ["acp"], dialect: "opencode", modelCli: { listArgs: ["models", "free"], primaryModels: ["free/auto"] }, supportsManualCompaction: true })
+    // Keep fields set by hand (e.g. icon). modelCli lists free/auto via the launcher, which answers
+    // without starting opencode; an ACP probe or "opencode models" sometimes failed (e.g. database
+    // is locked), and bb then showed only "Agent default".
+    agents.push({ ...all.find((a) => a.id === "free"), id: "free", displayName: "Free (auto)", command: process.env.FREE_ROUTER_LAUNCHER, args: ["acp"], dialect: "opencode", modelCli: { listArgs: ["--list-models"], primaryModels: ["free/auto"] }, supportsManualCompaction: true })
     try {
       execFileSync(bb, ["plugin", "config", "provider-acp", "set", "customAgents", JSON.stringify(agents)], { stdio: ["ignore", "ignore", "inherit"] })
     } catch {
