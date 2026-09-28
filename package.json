@@ -1,6 +1,6 @@
 {
   "name": "opencode-free-router",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "opencode plugin: always run on the best free model available, ranked by LMArena and Artificial Analysis, sticky per session, with automatic failover.",
   "private": true,
   "type": "module",
