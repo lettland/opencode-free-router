@@ -1,7 +1,4 @@
-// free-router: replaces the free/auto placeholder with the best-ranked free model, keeps that
-// model for the whole session, and fails over to the next-ranked one when it runs out.
-// opencode keeps one model for a whole turn (including its own retries), so a failover aborts
-// the turn and continues it on the next model. See README.md.
+// Routes every opencode session onto the best free model it can reach, and moves it on when that one runs out.
 import fs from "node:fs"
 import path from "node:path"
 import { execFile, spawn } from "node:child_process"
@@ -57,6 +54,16 @@ interface Turn {
   agent?: string
 }
 
+interface TurnBook {
+  get(sid: string): Turn | undefined
+  of(sid: string): Turn
+}
+
+interface Chooser {
+  choose(sid: string, exclude?: string[]): Promise<string | undefined>
+  setSticky(sid: string, id: string): void
+}
+
 const STATE = path.join(DIR, "state.json")
 const RANKING = path.join(DIR, "ranking.json")
 const LOG = path.join(DIR, "router.log")
@@ -67,7 +74,9 @@ function log(msg: string) {
     const st = fs.statSync(LOG, { throwIfNoEntry: false })
     if (st && st.size > 1 << 20) fs.renameSync(LOG, `${LOG}.1`)
     fs.appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`, { mode: 0o600 })
-  } catch {}
+  } catch {
+    // a log that cannot be written is not worth crashing over
+  }
 }
 
 const readState = () => decodeState(readJSON(STATE))
@@ -87,7 +96,9 @@ function which(bin: string) {
     try {
       fs.accessSync(p, fs.constants.X_OK)
       return p
-    } catch {}
+    } catch {
+      // not this directory
+    }
   }
   return undefined
 }
@@ -124,21 +135,12 @@ function maybeRefresh(cfg: Config) {
   log(`refreshing ranking in the background (pid ${child.pid})`)
 }
 
-export async function server({ client }: { client: RouterClient }): Promise<Hooks> {
-  const cfg = loadConfig()
-  try {
-    maybeRefresh(cfg)
-  } catch (e) {
-    log(`refresh check failed: ${errorText(e)}`)
-  }
+// The ids that are live, free right now and eligible, best first. Both inputs are cached: the
+// ranking file until its mtime moves, opencode's provider list for LIVE_TTL. The runtime free
+// check guards a ranking that has gone stale.
+function createCandidates(client: RouterClient, cfg: Config) {
   let ranking = { mtime: 0, ids: new Array<string>() }
   let live = { at: 0, models: new Array<ModelInfo>() }
-  const turns = new Map<string, Turn>()
-  function turnOf(sid: string) {
-    let t = turns.get(sid)
-    if (!t) turns.set(sid, (t = { switches: 0, expectContinue: false, managed: false }))
-    return t
-  }
 
   function getRanking() {
     const st = fs.statSync(RANKING, { throwIfNoEntry: false })
@@ -154,9 +156,11 @@ export async function server({ client }: { client: RouterClient }): Promise<Hook
     return live.models
   }
 
-  // Ordered ids that are live, free right now and eligible; the runtime free check guards a stale ranking.
-  const candidates = async () => orderCandidates(getRanking(), await getLive(), cfg, loadPins())
+  return async () => orderCandidates(getRanking(), await getLive(), cfg, loadPins())
+}
 
+// The model a session sticks to, and the one to move it to.
+function createChooser(candidates: () => Promise<string[]>): Chooser {
   async function choose(sid: string, exclude: string[] = []) {
     const state = readState()
     const ordered = await candidates()
@@ -172,8 +176,26 @@ export async function server({ client }: { client: RouterClient }): Promise<Hook
       s.sessions[sid] = { model: id, at: Date.now() }
     })
 
+  return { choose, setSticky }
+}
+
+function createTurnBook(): TurnBook {
+  const turns = new Map<string, Turn>()
+  return {
+    get: (sid) => turns.get(sid),
+    of: (sid) => {
+      let t = turns.get(sid)
+      if (!t) turns.set(sid, (t = { switches: 0, expectContinue: false, managed: false }))
+      return t
+    },
+  }
+}
+
+// opencode keeps one model for a whole turn, its own retries included, so a failover has to be
+// aborted and continued on the next model rather than retried where it stands.
+function createFailover(client: RouterClient, cfg: Config, turns: TurnBook, chooser: Chooser) {
   async function failover(sid: string, c: Failover, message: string, abort: boolean) {
-    const t = turnOf(sid)
+    const t = turns.of(sid)
     const from = readState().sessions[sid]?.model
     if (!from || t.pending) return
     const coolKey = c.scope === "provider" ? `${from.split("/")[0]}/*` : from
@@ -184,12 +206,12 @@ export async function server({ client }: { client: RouterClient }): Promise<Hook
       log(`give up ${sid}: already switched ${t.switches} times this turn; leaving ${from} (${c.klass})`)
       return
     }
-    const to = await choose(sid, [from])
+    const to = await chooser.choose(sid, [from])
     if (!to) {
       log(`no alternative for ${sid}; staying on ${from} (${c.klass})`)
       return
     }
-    setSticky(sid, to)
+    chooser.setSticky(sid, to)
     t.switches++
     t.pending = { from, to, klass: c.klass }
     log(`failover ${sid}: ${from} -> ${to} (${c.klass}: ${message.slice(0, 160)})`)
@@ -202,7 +224,7 @@ export async function server({ client }: { client: RouterClient }): Promise<Hook
   }
 
   async function resume(sid: string, tries = 0) {
-    const t = turnOf(sid)
+    const t = turns.of(sid)
     if (!t.pending || t.firing) return
     t.firing = true
     const st = await client.session.status().catch(() => undefined)
@@ -247,12 +269,26 @@ export async function server({ client }: { client: RouterClient }): Promise<Hook
     t.firing = false
   }
 
+  return { failover, resume }
+}
+
+export async function server({ client }: { client: RouterClient }): Promise<Hooks> {
+  const cfg = loadConfig()
+  try {
+    maybeRefresh(cfg)
+  } catch (e) {
+    log(`refresh check failed: ${errorText(e)}`)
+  }
+  const chooser = createChooser(createCandidates(client, cfg))
+  const turns = createTurnBook()
+  const { failover, resume } = createFailover(client, cfg, turns, chooser)
+
   return {
     "chat.message": async (input, output) => {
       const sid = input.sessionID
       // The SDK types promise message.model, but hosts older than they are may only send input.model.
       const model = output.message.model ?? input.model
-      const t = turnOf(sid)
+      const t = turns.of(sid)
       const ours = t.expectContinue
       t.expectContinue = false
       const sticky = readState().sessions[sid]?.model
@@ -270,7 +306,7 @@ export async function server({ client }: { client: RouterClient }): Promise<Hook
       }
       let id: string | undefined
       try {
-        id = await choose(sid)
+        id = await chooser.choose(sid)
       } catch (e) {
         log(`choose failed ${sid}: ${errorText(e)}`)
       }
@@ -278,10 +314,10 @@ export async function server({ client }: { client: RouterClient }): Promise<Hook
         log(`ERROR no free model available for ${sid}; free/auto left in place, the request will fail`)
         return
       }
-      // The pick replaces the model whole: a variant chosen for free/auto means nothing to it.
+      // The whole model goes, not just its id: a variant picked for free/auto means nothing to a real one.
       output.message.model = split(id)
       if (sticky !== id) log(`pick ${sid} -> ${id}${sticky ? ` (was ${sticky})` : ""}`)
-      setSticky(sid, id)
+      chooser.setSticky(sid, id)
     },
 
     event: async ({ event }) => {
