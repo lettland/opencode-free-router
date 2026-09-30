@@ -6,6 +6,10 @@ release. A `[minor]` or `[major]` marker in a commit subject picks the bump; oth
 
 ## Unreleased
 
+## 0.1.2 — 2026-09-30
+
+- Split the plugin's server closure into named factories
+
 ## 0.1.1 — 2026-09-28
 
 - The code is now TypeScript, type-checked by TypeScript 7 in strict mode, and still ships as source
